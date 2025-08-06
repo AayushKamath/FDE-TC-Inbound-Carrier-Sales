@@ -4,6 +4,7 @@ __pycache__/
 
 # venv
 .venv/
+.venv
 
 # OS junk
 .DS_Store
