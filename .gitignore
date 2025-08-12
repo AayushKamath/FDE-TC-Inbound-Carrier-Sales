@@ -1,18 +1,55 @@
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*$py.class
 
-# venv
+# Virtual environments
 .venv/
+venv/
+ENV/
+env/
 .venv
+venv
 
-# OS junk
+# Environment variables
+.env
+.env.*
+
+# OS-generated files
 .DS_Store
 Thumbs.db
 
-# Editor
+# IDE/editor folders
 .vscode/
 .idea/
 
-# Environment
-.env
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# Streamlit cache
+.streamlit/
+
+# Database files (optional — remove if you want them in git)
+*.db
+*.sqlite3
