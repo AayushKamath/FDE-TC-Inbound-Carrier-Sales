@@ -17,8 +17,9 @@ def get_load_by_id(load_id: str):
             return load
     return None
 
+
 def filter_loads(origin=None, destination=None, equipment_type=None,
-                pickup_date_before=None, pickup_date_after=None, min_rate=None, max_weight=None):
+                pickup_date_before=None, pickup_date_after=None, max_weight=None):
     loads = load_all_loads()
     filtered = []
 
@@ -48,11 +49,28 @@ def filter_loads(origin=None, destination=None, equipment_type=None,
             continue
         if equipment_type and equipment_type.lower() != load["equipment_type"].lower():
             continue
-        if min_rate and float(load["loadboard_rate"]) < float(min_rate):
-            continue
         if max_weight and int(load["weight"]) > int(max_weight):
             continue
         
         filtered.append(load)
 
     return filtered
+
+def get_top_loads_from_preferences(preferences: dict, limit: int = 3):
+    origin = preferences.get("origin")
+    destination = preferences.get("destination")
+    equipment_type = preferences.get("equipment_type")
+    pickup_date_after = preferences.get("pickup_date_after")
+    pickup_date_before = preferences.get("pickup_date_before")
+    max_weight = preferences.get("max_weight")
+
+    filtered = filter_loads(
+        origin=origin,
+        destination=destination,
+        equipment_type=equipment_type,
+        pickup_date_after=pickup_date_after,
+        pickup_date_before=pickup_date_before,
+        max_weight=max_weight
+    )
+
+    return filtered[:limit]
