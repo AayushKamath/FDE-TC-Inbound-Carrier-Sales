@@ -1,4 +1,3 @@
-# backend/metrics.py
 from __future__ import annotations
 import json
 from datetime import datetime
@@ -7,6 +6,7 @@ from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, F
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.engine.url import make_url
 import pathlib, os, uuid
+from fastapi import HTTPException
 
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./metrics.db")
 
@@ -49,6 +49,14 @@ class Event(Base):
     latency_ms = Column(Integer)
     payload_json = Column(Text)
 
+# NEW: server-side session mapping to keep one call_id per sales call
+class CallKey(Base):
+    __tablename__ = "call_keys"
+    session_key = Column(String, primary_key=True)   # derived from headers / mc_number
+    call_id = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    active = Column(Boolean, nullable=False, default=True)
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
 
@@ -87,7 +95,126 @@ def close_call(call_id: str, *, outcome: Optional[str] = None, sentiment: Option
         if load_id: c.load_id = load_id
         s.commit()
 
-# --- helper so routes can consistently extract a call id ---
+# --- Existing header-based helper (keep for future use) ---
 CALL_ID_HEADER = "X-HR-Call-ID"
-def get_call_id(request) -> str:
-    return request.headers.get(CALL_ID_HEADER) or str(uuid.uuid4())
+def get_call_id(request, *, generate_if_missing: bool = False) -> str:
+    cid = request.headers.get(CALL_ID_HEADER)
+    if cid:
+        return cid
+    if generate_if_missing:
+        # only the very first endpoint in the call flow should enable this
+        import uuid
+        return str(uuid.uuid4())
+    raise HTTPException(status_code=400, detail=f"Missing {CALL_ID_HEADER} header")
+
+# ---------------------------
+# NEW: no-HappyRobot-changes path
+# ---------------------------
+
+# Prefer a stable conversation header if HR ever sends one; otherwise fallback to mc_number
+POSSIBLE_SESSION_HEADERS = [
+    "X-HR-Call-ID",            # if HR starts sending this, we’ll reuse it
+    "X-HR-Conversation-ID",
+    "X-HR-Session-ID",
+    "X-Conversation-ID",
+    "X-Session-ID",
+]
+
+def derive_session_key(request, mc_number: Optional[str]) -> str:
+    # 1) Try known conversation/session headers
+    for h in POSSIBLE_SESSION_HEADERS:
+        v = request.headers.get(h)
+        if v:
+            return f"hdr:{h}:{v}"
+    # 2) Fallback: MC number (assumes 1 active call per MC at a time)
+    if mc_number:
+        return f"mc:{mc_number}"
+    # 3) Last resort: coarse IP key
+    ip = request.headers.get("X-Forwarded-For") or (request.client.host if getattr(request, "client", None) else "unknown")
+    return f"ip:{ip}"
+
+def get_or_create_call_id_for_session(request, mc_number: Optional[str]) -> str:
+    """Return a stable call_id for this sales call without requiring HR to send one."""
+    sk = derive_session_key(request, mc_number)
+    with SessionLocal() as s:
+        row = s.get(CallKey, sk)
+        if row and row.active:
+            return row.call_id
+
+        cid = str(uuid.uuid4())
+        ensure_call(s, cid, mc_number=mc_number)
+        s.merge(CallKey(session_key=sk, call_id=cid, active=True))
+        s.commit()
+        return cid
+
+def start_new_call_session(request, mc_number: Optional[str]) -> str:
+    """Force a fresh call_id for a new inbound call (e.g., at FMCSA verify)."""
+    sk = derive_session_key(request, mc_number)
+    with SessionLocal() as s:
+        cid = str(uuid.uuid4())
+        ensure_call(s, cid, mc_number=mc_number)
+        # upsert mapping to point this session_key at the new call_id
+        s.merge(CallKey(session_key=sk, call_id=cid, active=True))
+        s.commit()
+        return cid
+
+def set_call_sentiment(call_id: str, sentiment: str) -> None:
+    """Set sentiment on the call without closing or changing outcome."""
+    with SessionLocal() as s:
+        c = s.get(Call, call_id)
+        if not c:
+            return
+        c.sentiment = sentiment
+        s.commit()
+
+def deactivate_mappings_for_call(call_id: str) -> None:
+    """Mark mappings to this call_id inactive once the call is closed."""
+    with SessionLocal() as s:
+        s.query(CallKey).filter(CallKey.call_id == call_id, CallKey.active == True).update({"active": False})
+        s.commit()
+
+
+def resolve_existing_call_id(request, mc_number: Optional[str], load_id: Optional[str] = None) -> Optional[str]:
+    """Find the correct existing call_id for summary without creating a new one.
+    Preference order:
+    1) Explicit header X-HR-Call-ID
+    2) Most recent OPEN call for (mc_number, load_id)
+    3) Most recent OPEN call for (mc_number)
+    4) Active mapping (session key)
+    """
+    # 1) explicit header
+    cid = request.headers.get(CALL_ID_HEADER)
+    if cid:
+        return cid
+
+    with SessionLocal() as s:
+        # 2) newest open call for this (mc_number, load_id)
+        if mc_number and load_id:
+            c = (
+                s.query(Call)
+                 .filter(Call.mc_number == mc_number, Call.load_id == load_id, Call.outcome.is_(None))
+                 .order_by(Call.started_at.desc())
+                 .first()
+            )
+            if c:
+                return c.call_id
+
+        # 3) newest open call for this mc_number
+        if mc_number:
+            c = (
+                s.query(Call)
+                 .filter(Call.mc_number == mc_number, Call.outcome.is_(None))
+                 .order_by(Call.started_at.desc())
+                 .first()
+            )
+            if c:
+                return c.call_id
+
+        # 4) active mapping fallback
+        if mc_number:
+            sk = f"mc:{mc_number}"
+            row = s.get(CallKey, sk)
+            if row and row.active:
+                return row.call_id
+
+    return None

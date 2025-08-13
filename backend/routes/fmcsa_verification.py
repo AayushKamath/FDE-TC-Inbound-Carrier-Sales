@@ -1,7 +1,14 @@
 # backend/routes/fmcsa_verification.py
 from fastapi import APIRouter, Request, Depends, HTTPException
 from backend.security import validate_api_key
-from backend.metrics import log_event, get_call_id, close_call
+# from backend.metrics import log_event, get_call_id, close_call
+from backend.metrics import (
+    log_event,
+    get_or_create_call_id_for_session,  # NEW
+    close_call,
+    deactivate_mappings_for_call,         # NEW (optional, clean up mapping after close)
+    start_new_call_session
+)
 import httpx
 import os
 import time
@@ -20,7 +27,8 @@ async def verify_mc(request: Request):
     if not mc_number:
         raise HTTPException(status_code=400, detail="MC Number is required")
 
-    call_id = get_call_id(request)
+    call_id = start_new_call_session(request, mc_number=mc_number)
+
 
     # Call FMCSA API
     try:

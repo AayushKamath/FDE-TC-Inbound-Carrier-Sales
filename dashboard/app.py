@@ -91,10 +91,12 @@ with c3:
 
 # ===== Outcomes (includes 'ineligible' from FMCSA failures) =====
 st.subheader("Outcomes (from calls table)")
-if len(calls) and calls["outcome"].notna().any():
-    st.bar_chart(calls["outcome"].fillna("unknown").value_counts())
+if len(calls):
+    outcome_series = calls["outcome"].fillna("unbooked")
+    st.bar_chart(outcome_series.value_counts())
 else:
     st.info("No outcomes yet. Make a call that reaches summary or logs ineligible at FMCSA.")
+
 
 # ===== Sentiment (if you later store it on call close) =====
 st.subheader("Sentiment (if captured)")
@@ -104,12 +106,13 @@ else:
     st.caption("No sentiment logged yet.")
 
 # ===== Agreed Rate for accepted calls =====
-st.subheader("Agreed Rate (accepted only)")
-accepted_rates = calls.loc[calls["outcome"] == "accepted", ["agreed_rate"]].dropna()
+st.subheader("Average Sales Value (accepted only)")
+accepted_rates = calls.loc[calls["outcome"] == "accepted", "agreed_rate"].dropna()
 if len(accepted_rates):
-    st.line_chart(accepted_rates)
+    st.metric("Avg Sales Value", f"${accepted_rates.mean():,.2f}")
 else:
     st.caption("No accepted calls with agreed_rate yet.")
+
 
 # ===== Recent FMCSA + Negotiation Events =====
 st.subheader("Recent FMCSA + Negotiation Events")
