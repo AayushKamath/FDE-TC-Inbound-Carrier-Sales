@@ -14,7 +14,7 @@ As part of the solution, I simulate a call as a carrier and speak to the agent I
 7. Containerization with Docker
 8. AWS Cloud deployment
 
-## Features & Objectives
+## Tech Stack
 ------------
 1. Backend: Python, FastAPI
 2. Frontend/Dashboard: Streamlit
