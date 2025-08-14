@@ -53,3 +53,31 @@ htmlcov/
 # Database files (optional — remove if you want them in git)
 *.db
 *.sqlite3
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+*.tfvars
+.terraform.lock.hcl
+
+key.pem
+cert.pem
+td.json
+td-new.json
+td-min.json
+# Ignore AWS CLI change batch JSON files
+rrset-*.json
+change-batch-*.json
+
+# Ignore temporary AWS CLI input/output files
+aws-cli-*.json
+temp-aws-*.json
+
+conds_api.json

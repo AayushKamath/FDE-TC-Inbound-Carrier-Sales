@@ -10,7 +10,7 @@ Streamlit dashboard for Inbound Carrier Sales metrics (focused on FMCSA + Negoti
 import os
 import sys
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 import streamlit as st
 
 # Make the project root importable (so "backend.metrics" works without packaging)
@@ -18,31 +18,50 @@ PROJECT_ROOT = os.path.abspath(os.path.join(__file__, "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./metrics.db")
-engine = create_engine(DB_URL, future=True)
+# ---- use the SAME engine the backend uses (no duplicate engines) ----
+# metrics.py already builds 'engine' using DATABASE_URL and sets all the right flags
+# (sqlite path fix, pool settings, etc.)
+try:
+    from backend.metrics import engine, init_db  # engine exists; init_db creates ORM tables
+    HAVE_BACKEND = True
+except Exception:
+    HAVE_BACKEND = False
+    # VERY rare fallback: if importing backend fails, synthesize a local engine
+    from sqlalchemy import create_engine
+    DB_URL = os.getenv("DATABASE_URL", "sqlite:///./metrics.db")
+    engine = create_engine(DB_URL, future=True)
 
 # Create tables if missing (works even if API isn't running yet)
 def _ensure_tables():
-    try:
-        from backend.metrics import init_db  # type: ignore
-        init_db()
-    except Exception:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS calls (
-                    call_id TEXT PRIMARY KEY,
-                    started_at TIMESTAMP NOT NULL,
-                    ended_at TIMESTAMP,
-                    mc_number TEXT,
-                    load_id TEXT,
-                    agreed_rate FLOAT,
-                    outcome TEXT,
-                    sentiment TEXT
-                );
-            """))
+    # Preferred path: use your backend's ORM initializer (portable for SQLite/Postgres)
+    if HAVE_BACKEND:
+        try:
+            init_db()  # creates calls/events per your models
+            return
+        except Exception:
+            pass  # fall through to lightweight DDL
+
+    # Fallback DDL: only difference from your original is AUTOINCREMENT handling
+    dialect = engine.dialect.name  # "sqlite" or "postgresql"
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS calls (
+                call_id TEXT PRIMARY KEY,
+                started_at TIMESTAMP NOT NULL,
+                ended_at TIMESTAMP,
+                mc_number TEXT,
+                load_id TEXT,
+                agreed_rate FLOAT,
+                outcome TEXT,
+                sentiment TEXT
+            );
+        """))
+
+        # --- events table: id/boolean default differ per dialect ---
+        if dialect.startswith("sqlite"):
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY,      -- no AUTOINCREMENT keyword needed on SQLite
                     call_id TEXT NOT NULL,
                     ts TIMESTAMP NOT NULL,
                     event_type TEXT NOT NULL,
@@ -51,8 +70,22 @@ def _ensure_tables():
                     payload_json TEXT
                 );
             """))
+        else:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS events (
+                    id SERIAL PRIMARY KEY,       -- Postgres-friendly
+                    call_id TEXT NOT NULL,
+                    ts TIMESTAMP NOT NULL,
+                    event_type TEXT NOT NULL,
+                    ok BOOLEAN DEFAULT TRUE,     -- Postgres boolean default
+                    latency_ms INTEGER,
+                    payload_json TEXT
+                );
+            """))
 
+# Ensure tables once at import 
 _ensure_tables()
+
 
 @st.cache_data(ttl=15)
 def load_data():
@@ -91,12 +124,10 @@ with c3:
 
 # ===== Outcomes (includes 'ineligible' from FMCSA failures) =====
 st.subheader("Outcomes (from calls table)")
-if len(calls):
-    outcome_series = calls["outcome"].fillna("unbooked")
-    st.bar_chart(outcome_series.value_counts())
+if len(calls) and calls["outcome"].notna().any():
+    st.bar_chart(calls["outcome"].fillna("unknown").value_counts())
 else:
     st.info("No outcomes yet. Make a call that reaches summary or logs ineligible at FMCSA.")
-
 
 # ===== Sentiment (if you later store it on call close) =====
 st.subheader("Sentiment (if captured)")
@@ -112,7 +143,6 @@ if len(accepted_rates):
     st.metric("Avg Sales Value", f"${accepted_rates.mean():,.2f}")
 else:
     st.caption("No accepted calls with agreed_rate yet.")
-
 
 # ===== Recent FMCSA + Negotiation Events =====
 st.subheader("Recent FMCSA + Negotiation Events")

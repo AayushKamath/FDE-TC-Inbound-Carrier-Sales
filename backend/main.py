@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, Query, HTTPException, Body, Request, Depends
+from fastapi import FastAPI, Query, HTTPException, Body, Request, Depends, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from backend.load_data import filter_loads, get_load_by_id, get_top_loads_from_preferences
 from typing import Optional, Any
@@ -8,29 +8,45 @@ from datetime import datetime
 from backend.routes.fmcsa_verification import router as fmcsa_router
 from backend.negotiation import update_negotiation_session
 from backend.security import validate_api_key
+from sqlalchemy import text
+
 # from backend.metrics import init_db, log_event, get_call_id  # <- use helper
 from backend.metrics import (
     get_or_create_call_id_for_session,  # NEW
     log_event, close_call, init_db, deactivate_mappings_for_call,
     resolve_existing_call_id, SessionLocal, Call,
-    set_call_sentiment
+    set_call_sentiment, engine
 )
 import uuid
+import os
 
 # --- Initialize app ---
 app = FastAPI()
-
 # CORS (fine to keep; tighten in prod)
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://aayushai.com").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
     allow_headers=["*"],
 )
 
-# Initialize DB for logging
-init_db()
+# -------- NEW: DB init on startup ----------
+@app.on_event("startup")
+def _startup():
+    # Creates tables if they don't exist, works for SQLite and Postgres
+    init_db()
+
+# ---------- NEW: Health check endpoint ----------
+@app.get("/healthz")
+def healthz():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"db not ok: {e}")
 
 # Include FMCSA route
 app.include_router(fmcsa_router, dependencies=[Depends(validate_api_key)])
@@ -228,3 +244,7 @@ async def call_summary(payload: CallSummaryPayload, request: Request):
     # Do NOT close/accept anything here (negotiation already did it)
     return {"ok": True, "received_at": ts, "call_id": call_id}
 
+# Expose every existing endpoint again under the "/api" prefix (so ALB /api/* works)
+_prefixed = APIRouter()
+_prefixed.include_router(app.router)   # clone all existing routes
+app.include_router(_prefixed, prefix="/api")  # expose them under /api/...

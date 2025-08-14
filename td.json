@@ -1,0 +1,109 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-1:975201825197:task-definition/hr-inbound-dashboard:2",
+    "containerDefinitions": [
+        {
+            "name": "dashboard",
+            "image": "975201825197.dkr.ecr.us-east-1.amazonaws.com/hr-dashboard:latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8501,
+                    "hostPort": 8501,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "LOG_LEVEL",
+                    "value": "info"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "secrets": [
+                {
+                    "name": "INTERNAL_API_KEY",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:975201825197:secret:hr-inbound-INTERNAL_API_KEY-s02518"
+                },
+                {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:975201825197:secret:hr-inbound-DATABASE_URL-zlfAJj"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/hr-inbound-dashboard",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "healthCheck": {
+                "command": [
+                    "CMD-SHELL",
+                    "curl -s http://localhost:8501/ || exit 1"
+                ],
+                "interval": 30,
+                "timeout": 5,
+                "retries": 3,
+                "startPeriod": 10
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "hr-inbound-dashboard",
+    "taskRoleArn": "arn:aws:iam::975201825197:role/hr-inbound-task-role",
+    "executionRoleArn": "arn:aws:iam::975201825197:role/hr-inbound-task-exec-role",
+    "networkMode": "awsvpc",
+    "revision": 2,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "ecs.capability.secrets.asm.environment-variables"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.container-health-check"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "512",
+    "memory": "1024",
+    "registeredAt": "2025-08-13T08:40:55.956000-07:00",
+    "registeredBy": "arn:aws:iam::975201825197:user/Aayush"
+}

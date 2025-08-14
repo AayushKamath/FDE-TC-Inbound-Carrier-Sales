@@ -5,6 +5,7 @@ from typing import Any, Optional
 from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Float, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.engine.url import make_url
+from sqlalchemy.pool import QueuePool
 import pathlib, os, uuid
 from fastapi import HTTPException
 
@@ -24,7 +25,23 @@ try:
 except Exception:
     pass
 
-engine = create_engine(DB_URL, future=True)
+# Use pre_ping + pooled connections; keep SQLite thread-safety for dev
+_engine_kwargs = dict(future=True, pool_pre_ping=True)
+try:
+    url = make_url(DB_URL)
+    if url.drivername.startswith("sqlite"):
+        _engine_kwargs["connect_args"] = {"check_same_thread": False}
+        _engine_kwargs["poolclass"] = QueuePool
+        _engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+        _engine_kwargs["max_overflow"] = int(os.getenv("DB_POOL_MAX_OVERFLOW", "5"))
+    else:
+        _engine_kwargs["poolclass"] = QueuePool
+        _engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+        _engine_kwargs["max_overflow"] = int(os.getenv("DB_POOL_MAX_OVERFLOW", "10"))
+except Exception:
+    pass
+
+engine = create_engine(DB_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 Base = declarative_base()
 

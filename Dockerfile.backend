@@ -7,6 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN pip install --no-cache-dir psycopg2-binary
+
+# add this near the top (for Debian/Ubuntu-based images)
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # system deps (add git because GitPython expects it)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates build-essential git && \
