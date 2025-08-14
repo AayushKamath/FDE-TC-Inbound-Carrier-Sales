@@ -98,3 +98,132 @@ Expected URLs
 
 - Dashboard: http://localhost:8501 (mapped from container port 8501)
 
+## Cloud Deploy (AWS)
+----------------------------
+API (FastAPI) + Dashboard (Streamlit) on ECS Fargate behind an ALB, data in RDS Postgres, DNS via Route 53, TLS via ACM.
+Dev uses SQLite locally; AWS uses RDS via DATABASE_URL (Secrets Manager).
+
+### Architecture
+
+- ALB: HTTPS 443 (default → dashboard), path rule /api/* → API. HTTP 80 → redirect to HTTPS.
+- ECS/Fargate: Two services: *-api-svc, *-dashboard-svc.
+- RDS Postgres: Small public instance (POC), security-grouped to ECS tasks.
+- Secrets Manager: DATABASE_URL (postgresql+psycopg2://...).
+- Route 53: aayushai.com → ALB (A + AAAA alias). www → CNAME apex (optional).
+- CORS: ALLOWED_ORIGINS env on API task: https://aayushai.com,https://www.aayushai.com.
+
+### Prerequisites
+
+- AWS CLI configured for us-east-1
+- Terraform installed
+- ECR repos created: hr-api, hr-dashboard
+- ACM certificate for your domain (in us-east-1)
+- Route 53 hosted zone for your domain
+- My domain is aayushai.com
+
+### Terraform – initialize & apply
+```
+:: In the terraform directory
+terraform init -upgrade
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+
+### Build, tag, and push images to ECR
+```
+:: ECR login
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <your-ecr-endpoint>
+
+:: Create a timestamp tag (no spaces)
+set TAG=v%DATE:~10,4%%DATE:~4,2%%DATE:~7,2%-%TIME:~0,2%%TIME:~3,2%
+set TAG=%TAG: =0%
+
+:: API image
+docker build -f Dockerfile.backend -t hr-api:%TAG% .
+docker tag hr-api:%TAG% <your-ecr-endpoint>/hr-api:%TAG%
+docker push <your-ecr-endpoint>/hr-api:%TAG%
+
+:: Dashboard image
+docker build -f Dockerfile.dashboard -t hr-dashboard:%TAG% .
+docker tag hr-dashboard:%TAG% <your-ecr-endpoint>/hr-dashboard:%TAG%
+docker push <your-ecr-endpoint>/hr-dashboard:%TAG%
+
+```
+
+### ECS – redeploy services
+```
+:: Force a new deployment (same task def)
+aws ecs update-service --cluster <ecs-cluster-name> --service *-api-svc --force-new-deployment --no-cli-pager
+aws ecs update-service --cluster <ecs-cluster-name> --service *-dashboard-svc --force-new-deployment --no-cli-pager
+
+:: Wait until stable
+aws ecs wait services-stable --cluster <ecs-cluster-name> --services *-api-svc *-dashboard-svc --no-cli-pager
+```
+
+### ALB – HTTPS listener, path routing, and HTTP→HTTPS
+Find ARNs you’ll need
+```
+:: Load balancer ARN
+aws elbv2 describe-load-balancers --names fde-inbound-alb --query "LoadBalancers[0].LoadBalancerArn" --no-cli-pager
+
+:: Target groups
+aws elbv2 describe-target-groups --names fde-inbound-tg-api fde-inbound-tg-dash --query "TargetGroups[].{Name:TargetGroupName,Arn:TargetGroupArn}" --no-cli-pager
+
+:: Verify HTTPS listener (443); if empty, create it
+aws elbv2 describe-listeners --load-balancer-arn <LB_ARN> --query "Listeners[].{Port:Port,Arn:ListenerArn,Protocol:Protocol}" --no-cli-pager
+
+```
+
+Create HTTPS 443 listener (default → dashboard)
+```
+aws elbv2 create-listener --load-balancer-arn <LB_ARN> --protocol HTTPS --port 443 --certificates CertificateArn=<CERT_ARN> --default-actions Type=forward,TargetGroupArn=<DASH_TG_ARN> --no-cli-pager
+```
+
+Add /api/* rule on 443 → API target group
+```
+aws elbv2 create-rule --listener-arn <HTTPS_LISTENER_ARN> --priority 10 --conditions Field=path-pattern,Values="/api/*","/api" --actions Type=forward,TargetGroupArn=<API_TG_ARN> --no-cli-pager
+```
+
+Modify HTTP 80 to redirect → HTTPS 443
+```
+aws elbv2 modify-listener --listener-arn <HTTP_LISTENER_ARN> --default-actions Type=redirect,RedirectConfig={Protocol=HTTPS,Port=443,StatusCode=HTTP_301} --no-cli-pager
+```
+
+Verify listener rules
+```
+aws elbv2 describe-rules --listener-arn <HTTPS_LISTENER_ARN> --no-cli-pager --query "Rules[].{Priority:Priority,Conditions:Conditions,Actions:Actions}"
+```
+
+### Secrets Manager – DATABASE_URL (RDS connection)
+```
+aws secretsmanager get-secret-value --secret-id fde-inbound-DATABASE_URL --no-cli-pager
+```
+Format:
+postgresql+psycopg2://<user>:<pass>@<rds-endpoint>:5432/<db_name>
+
+### Health Checks and Logs
+```
+:: ALB target health
+aws elbv2 describe-target-health --target-group-arn <API_TG_ARN> --no-cli-pager
+aws elbv2 describe-target-health --target-group-arn <DASH_TG_ARN> --no-cli-pager
+
+:: CloudWatch logs (change group as needed)
+aws logs tail /ecs/fde-inbound-api --since 30m --no-cli-pager
+aws logs tail /ecs/fde-inbound-dashboard --since 30m --no-cli-pager
+```
+
+### Troubleshooting
+```
+:: Which image is running?
+aws ecs describe-task-definition --task-definition <TASK_DEF_ARN> --query "taskDefinition.containerDefinitions[0].image" --no-cli-pager
+
+:: Which TG is default on 443?
+aws elbv2 describe-listeners --load-balancer-arn <LB_ARN> --query "Listeners[?Port==`443`].DefaultActions" --no-cli-pager
+
+:: Confirm path rule exists
+aws elbv2 describe-rules --listener-arn <HTTPS_LISTENER_ARN> --no-cli-pager
+
+:: Force replace a flapping task
+aws ecs update-service --cluster fde-inbound-cluster --service fde-inbound-api-svc --force-new-deployment --no-cli-pager
+
+```
