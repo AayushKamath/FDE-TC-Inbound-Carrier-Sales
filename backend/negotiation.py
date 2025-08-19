@@ -62,10 +62,7 @@ def _append_offer_once(session: NegotiationSession, offer: float) -> None:
         session.carrier_offers.append(x)
 
 
-def reset_session(mc_number: str, load_id: str, session_id: Optional[str] = None) -> None:
-    """Remove the in-memory session for a completed/abandoned call."""
-    key = _session_key(mc_number, load_id, session_id)
-    NEGOTIATION_SESSIONS.pop(key, None)
+
 
 
 def _round_tolerance(base: float, round_number: int) -> float:
@@ -273,3 +270,9 @@ def update_negotiation_session(
         "round_number": r,
         "status": "ongoing",
     }
+
+def reset_session(mc_number: str, load_id: str, session_id: Optional[str] = None) -> None:
+    """Remove the in-memory session for a completed/abandoned call."""
+    key = _session_key(mc_number, load_id, session_id)
+    print(key)
+    NEGOTIATION_SESSIONS.pop(key, None)
