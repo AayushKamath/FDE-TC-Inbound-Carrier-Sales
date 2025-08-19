@@ -6,7 +6,7 @@ from typing import Optional, Any
 from pydantic import BaseModel
 from datetime import datetime
 from backend.routes.fmcsa_verification import router as fmcsa_router
-from backend.negotiation import update_negotiation_session
+from backend.negotiation import update_negotiation_session, reset_session
 from backend.security import validate_api_key
 from sqlalchemy import text
 
@@ -95,14 +95,15 @@ def negotiate_round(req: NegotiationRequest, request: Request):
     if not load:
         raise HTTPException(status_code=404, detail="Load not found")
 
-    # NEW: server-side stable call_id (no HR header required)
+    # NEW: server-side stable call_id (no client payload change)
     call_id = get_or_create_call_id_for_session(request, mc_number=req.mc_number)
 
     result = update_negotiation_session(
         load_id=req.load_id,
         mc_number=req.mc_number,
         offer=req.carrier_offer,
-        loadboard_rate=load["loadboard_rate"]
+        loadboard_rate=load["loadboard_rate"],
+        session_id = call_id        # ← scope negotiation to THIS call only
     )
 
     log_event(
@@ -127,7 +128,8 @@ def negotiate_round(req: NegotiationRequest, request: Request):
         )
         # Optional: prevent accidental reuse after closure
         deactivate_mappings_for_call(call_id)
-    
+        reset_session(req.mc_number, req.load_id, call_id)
+
     else:
     # Safely catch “failed” terminals without assumptions
         status = (result.get("status") or "").lower()
@@ -147,6 +149,7 @@ def negotiate_round(req: NegotiationRequest, request: Request):
                 mc_number=req.mc_number
             )
             deactivate_mappings_for_call(call_id)
+            reset_session(req.mc_number, req.load_id, call_id)
     return result
 
 

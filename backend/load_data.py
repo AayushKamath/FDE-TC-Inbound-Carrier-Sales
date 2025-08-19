@@ -24,6 +24,14 @@ def filter_loads(origin=None, destination=None, equipment_type=None,
     filtered = []
 
     for load in loads:
+        
+            
+        if origin and origin.lower() not in load["origin"].lower():
+            continue
+        if destination and destination.lower() not in load["destination"].lower():
+            continue
+        if equipment_type and equipment_type.lower() != load["equipment_type"].lower():
+            continue
         pickup_dt = datetime.fromisoformat(load["pickup_datetime"])
          # Before filter
         if pickup_date_before:
@@ -42,13 +50,6 @@ def filter_loads(origin=None, destination=None, equipment_type=None,
                 cutoff_after = datetime.strptime(pickup_date_after, "%Y-%m-%d")
             if pickup_dt < cutoff_after:
                 continue
-            
-        if origin and origin.lower() not in load["origin"].lower():
-            continue
-        if destination and destination.lower() not in load["destination"].lower():
-            continue
-        if equipment_type and equipment_type.lower() != load["equipment_type"].lower():
-            continue
         if max_weight and int(load["weight"]) > int(max_weight):
             continue
         
